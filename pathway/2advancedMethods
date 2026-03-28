@@ -1,0 +1,173 @@
+#===============================================================
+# 0) Clean & libraries
+#===============================================================
+rm(list = ls())
+
+library(Matrix)
+library(FactoMineR)
+library(GSEABase)
+library(data.table)
+
+#===============================================================
+# 1) Paths
+#===============================================================
+
+cancer_type <- "GSE100501"
+
+out_dir  <- paste0("/proj/c.zihao/work2/1pathway/2pertu/", cancer_type, "/pathway/1advan/")
+read_dir <- paste0("/proj/c.zihao/work2/1pathway/2pertu/", cancer_type, "/out/")
+
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+source("/proj/c.zihao/work2/function/PaaSc.R")
+source("/proj/c.zihao/work2/function/gsdensity.R")
+
+#===============================================================
+# 4) Read GMT
+#===============================================================
+gmt_file1 <- "/proj/c.zihao/work2/2pathway/c2.cp.kegg_legacy.v2025.1.Hs.symbols.gmt"
+gmt_file2 <- "/proj/c.zihao/work2/2pathway/h.all.v2025.1.Hs.symbols.gmt"
+gmt_file3 <- "/proj/c.zihao/work2/2pathway/c2.cp.reactome.v2025.1.Hs.symbols.gmt"
+
+gmt1 <- GSEABase::getGmt(gmt_file1)
+gmt2 <- GSEABase::getGmt(gmt_file2)
+gmt3 <- GSEABase::getGmt(gmt_file3)
+
+gs1 <- as(gmt1, "list")
+gs2 <- as(gmt2, "list")
+gs3 <- as(gmt3, "list")
+
+names(gs1) <- paste0("KEGG_", names(gs1))
+names(gs2) <- paste0("HALLMARK_", names(gs2))
+names(gs3) <- paste0("REACTOME_", names(gs3))
+
+gmt <- GeneSetCollection(c(gs1, gs2, gs3))
+
+cat("GMT class:", class(gmt), "\n")
+cat("Total genesets:", length(gmt), "\n")
+print(head(names(gmt)))
+
+#===============================================================
+# 5) Find samples
+#===============================================================
+
+sample_id <- basename(list.dirs(read_dir, recursive = FALSE, full.names = TRUE))
+print(sample_id)
+
+
+for (i in seq_along(sample_id)) {
+  
+
+  data_dir <- file.path(read_dir, sample_id[i])
+  sid <- basename(data_dir)
+  cat("\n==================== ", sid, " ====================\n")
+  
+  setwd(data_dir)
+  data   <- fread('logNorm.txt')
+  data <- as.data.frame(data)
+  data[1:5,1:5]
+  names(data)[1] <- 'gene'
+  rownames(data) <- data$gene
+  data$gene <- NULL
+  data[1:5,1:5]
+  
+  data <- as.matrix(data)
+  mode(data) <- "numeric"
+  
+  cat("data dim:", dim(data), "\n")
+  
+  #-------------------------------------------------------------
+  # 6.2 Build genesets and filter by overlap
+  #-------------------------------------------------------------
+  pathway_list <- setNames(lapply(gmt, GSEABase::geneIds), names(gmt))
+  
+  # keep your original symbol rule
+  pathway_list <- lapply(pathway_list, function(x) gsub("_", "-", x))
+  
+  expr.genes <- rownames(data)
+  pathway_list <- lapply(pathway_list, function(x) intersect(x, expr.genes))
+  pathway_list <- pathway_list[lengths(pathway_list) >= 10]
+  
+  cat("Gene sets kept (>=10 genes after intersect):", length(pathway_list), "\n")
+  stopifnot(length(pathway_list) > 0)
+  
+  #=============================================================
+  # 7) PaaSc
+  #=============================================================
+  mca.res <- computeMCA(
+    expr = data,
+    nmcs = 20
+  )
+  
+  gene.rate <- getGeneRate(
+    background.geneset = pathway_list,
+    pathway.geneset = pathway_list,
+    mode = "single"
+  )
+  
+  regression.res <- doRegression(
+    mca.res = mca.res,
+    gene.rate = gene.rate
+  )
+  
+  score.data <- computeScore(
+    mca.res = mca.res,
+    regression.data = regression.res,
+    pvalue = 0.05,
+    weight = FALSE,
+    normalize = "z-score"
+  )
+  
+  passc_df <- as.data.frame(t(score.data))
+  
+  cat("passc_df dim:", dim(passc_df), "\n")
+  
+  #=============================================================
+  # 8) gsdensity
+  #=============================================================
+  ce <- compute.mca(expr = data)
+  
+  cells <- colnames(data)
+  el <- compute.nn.edges(coembed = ce, nn.use = 10)
+  
+  pathway_cell_score_list <- lapply(seq_along(pathway_list), function(j) {
+    gs_genes <- pathway_list[[j]]
+    
+    cv <- run.rwr(
+      el = el,
+      gene_set = gs_genes,
+      cells = cells
+    )
+    
+    cv <- as.numeric(cv)
+    names(cv) <- cells
+    return(cv)
+  })
+  
+  names(pathway_cell_score_list) <- names(pathway_list)
+  
+  pathway_cell_score_mat <- do.call(rbind, pathway_cell_score_list)
+  rownames(pathway_cell_score_mat) <- names(pathway_list)
+  colnames(pathway_cell_score_mat) <- cells
+  
+  gdensity_df <- pathway_cell_score_mat
+  
+  cat("gdensity_df dim:", dim(gdensity_df), "\n")
+  
+  #=============================================================
+  # 9) Output list
+  #=============================================================
+  result_list <- list(
+    passc    = passc_df,
+    gdensity = gdensity_df,
+    genesets    = pathway_list
+  )
+  
+  file_to_save <- paste0(sid, "_pathway_scores.rds")
+  saveRDS(result_list, file = file.path(out_dir, file_to_save))
+  
+  cat("Saved:", file.path(out_dir, file_to_save), "\n")
+  cat("=============================================================\n")
+}
+
+cat("All samples done.\n")
