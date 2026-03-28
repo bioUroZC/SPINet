@@ -1,11 +1,6 @@
----
-
 # 🧬 SPINet
 
 **Network-informed diffusion framework for cell-specific pathway activity and protein interaction inference from single-cell RNA-seq**
-
----
-
 
 
 <img width="2047" height="1091" alt="eb2d9a91-12b8-461e-ae24-60b0a014a323" src="https://github.com/user-attachments/assets/56ad8759-b8c5-4f99-b93a-6c6cfa0e8e7e" />
