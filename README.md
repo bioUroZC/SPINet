@@ -251,7 +251,7 @@ Contributions are welcome! Please:
 
 For questions or collaborations:
 
-* Email: [your_email@domain.com](mailto:your_email@domain.com)
+* Email: [zihaochenn@gmail.com](mailto:zihaochenn@gmail.com)
 * GitHub Issues
 
 ---
